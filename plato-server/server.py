@@ -3,7 +3,7 @@ import tornado.httpserver, tornado.ioloop, tornado.web
 class Application(tornado.web.Application):
     def __init__(self):
         handlers = [
-            (r"/upload", UploadHandler)
+            ('/upload', UploadHandler)
         ]
         tornado.web.Application.__init__(self, handlers)
 
@@ -17,5 +17,5 @@ def main():
     print 'Starting HTTP server on port 8080'
     tornado.ioloop.IOLoop.instance().start()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
