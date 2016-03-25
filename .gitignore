@@ -47,3 +47,6 @@ local.properties
 
 # Code Recommenders
 .recommenders/
+
+# Network snapshots
+plato-server/snapshots/

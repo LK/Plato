@@ -34,8 +34,7 @@ def main():
             print('[!] Received %d response' % r.status_code)
         else:
              for f in files:
-                 #os.remove(f)
-                 print('Removing %s' % f)
+                 os.remove(os.path.join(args.dir, f))
 
         time.sleep(60 * args.interval)
 

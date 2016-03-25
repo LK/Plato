@@ -1,5 +1,6 @@
 import tornado.httpserver, tornado.ioloop, tornado.web
 import os
+import glob
 from pymongo import MongoClient
 
 games = None
@@ -8,9 +9,17 @@ games_history = None
 class Application(tornado.web.Application):
     def __init__(self):
         handlers = [
+            ('/download', DownloadHandler),
             ('/upload', UploadHandler)
         ]
         tornado.web.Application.__init__(self, handlers)
+
+class DownloadHandler(tornado.web.RequestHandler):
+    def get(self):
+        # http://stackoverflow.com/questions/18279063/python-find-newest-file-with-mp3-extension-in-directory
+        newest = max(glob.iglob('snapshots/*.h5'), key=os.path.getctime)
+        f = open(newest, 'rb')
+        self.write(f.read())
 
 class UploadHandler(tornado.web.RequestHandler):
     def post(self):
@@ -39,7 +48,7 @@ class UploadHandler(tornado.web.RequestHandler):
 
             bad_data = False
             for state in states:
-                if len(state) != 4:
+                if len(state) != 5:
                     bad_data = True
                     break
 
@@ -49,9 +58,10 @@ class UploadHandler(tornado.web.RequestHandler):
             for state in lines[:-1]:
                 nums = state.split(' ')
 
-                history.append({'heading': float(nums[0]), 'energy': float(nums[1]), 'oppBearing': float(nums[2]), 'oppEnergy': float(nums[3])})
+                history.append({'heading': float(nums[0]), 'energy': float(nums[1]), 'oppBearing': float(nums[2]), 'oppEnergy': float(nums[3]), 'action': int(nums[4])})
 
             doc = {'name': os.path.splitext(filename)[0], 'history': history, 'res': lines[-1]}
+
             games.insert_one(doc)
             games_history.insert_one(doc)
 
