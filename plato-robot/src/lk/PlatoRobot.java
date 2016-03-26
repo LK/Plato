@@ -10,6 +10,7 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Random;
 
 import robocode.AdvancedRobot;
 import robocode.DeathEvent;
@@ -27,16 +28,31 @@ public class PlatoRobot extends AdvancedRobot {
 	private final boolean LEARN = true;
 	private BufferedWriter output;
 	private NeuralNetwork network;
+	private int consecutiveWins = 0;
+	private double epsilon = 0.0f;
+	
+	private enum Action {
+		FORWARD,
+		BACKWARD,
+		LEFT,
+		RIGHT,
+		FIRE,
+		NOTHING
+	}
 	
 	public void run() {
-		buildNetwork();
-		try {
-			File file = this.getDataFile(this.getCurrentTimeStamp() + ".txt");
-			file.createNewFile();
-			FileOutputStream outputStream = new FileOutputStream(file);
-			this.output = new BufferedWriter(new OutputStreamWriter(outputStream));
-		} catch (Exception e) {
-			System.out.println("COULD NOT CREATE FILE");
+		if (this.consecutiveWins % 10 == 0) buildNetwork();
+		
+		if (LEARN) {
+			try {
+				File file = this.getDataFile(this.getCurrentTimeStamp() + ".txt");
+				System.out.println(file.getAbsolutePath());
+				file.createNewFile();
+				FileOutputStream outputStream = new FileOutputStream(file);
+				this.output = new BufferedWriter(new OutputStreamWriter(outputStream));
+			} catch (Exception e) {
+				System.out.println("COULD NOT CREATE FILE");
+			}
 		}
 		
 		while (true) {
@@ -47,24 +63,85 @@ public class PlatoRobot extends AdvancedRobot {
 	
 	// When we scan a robot, record a new state.
 	public void onScannedRobot(ScannedRobotEvent event) {
-		this.write(this.getHeading() + " " + this.getEnergy() + " " + event.getBearing() + " " + event.getEnergy());
+		Action a;
+		Random rand = new Random();
+		double r = rand.nextDouble();
+		if (r < this.epsilon) {
+			r = rand.nextDouble();
+			if (r < 1.0/6.0) {
+				a = Action.FORWARD;
+			} else if (r < 2.0/6.0) {
+				a = Action.BACKWARD;
+			} else if (r < 3.0/6.0) {
+				a = Action.LEFT;
+			} else if (r < 4.0/6.0) {
+				a = Action.RIGHT;
+			} else if (r < 5.0/6.0) {
+				a = Action.FIRE;
+			} else {
+				a = Action.NOTHING;
+			}
+		} else {
+			double maxQ = 0.0;
+			Action maxA = Action.NOTHING;
+			for (Action A : Action.values()) {
+				this.network.setInput(this.getHeading(), this.getEnergy(), event.getBearing(), event.getEnergy(), A.ordinal());
+				this.network.calculate();
+				double Q = this.network.getOutput()[0];
+				if (Q > maxQ) {
+					maxQ = Q;
+					maxA = A;
+				}
+			}
+			a = maxA;
+		}
+		
+		switch (a) {
+		case FORWARD:
+			this.setAhead(10);
+			break;
+		case BACKWARD:
+			this.setBack(10);
+			break;
+		case LEFT:
+			this.setTurnLeft(10);
+			break;
+		case RIGHT:
+			this.setTurnRight(10);
+			break;
+		case FIRE:
+			this.setFire(1);
+			break;
+		default:
+			break;
+		}
+		
+		this.write(this.getHeading() + " " + this.getEnergy() + " " + event.getBearing() + " " + event.getEnergy() + " " + a.ordinal());
 	}
 	
 	public void onWin(WinEvent event) {
 		this.write("W");
-		try {
-			this.output.close();
-		} catch (IOException e) {
-			System.out.println("COULDN'T WRITE/UPLOAD FILE");
+		this.consecutiveWins += 1;
+		
+		if (LEARN) {
+			try {
+				this.output.close();
+			} catch (IOException e) {
+				System.out.println("COULDN'T WRITE/UPLOAD FILE");
+			}
 		}
 	}
 	
 	public void onDeath(DeathEvent event) {
 		this.write("L");
-		try {
-			this.output.close();
-		} catch (IOException e) {
-			System.out.println("COULDN'T WRITE TO FILE");
+		this.consecutiveWins = 0;
+		
+		if (LEARN) {
+			try {
+				this.output.close();
+			} catch (IOException e) {
+				System.out.println("COULDN'T WRITE TO FILE");
+			}
 		}
 	}
 	
@@ -73,6 +150,8 @@ public class PlatoRobot extends AdvancedRobot {
 	}
 	
 	public void write(String s) {
+		if (!LEARN) return;
+		
 		try {
 			this.output.write(s);
 			this.output.newLine();
@@ -83,15 +162,20 @@ public class PlatoRobot extends AdvancedRobot {
 	
 	public void buildNetwork() {
 		try {
-			File dataFile = this.getDataFile("network.h5");
-			FileUtils.copyURLToFile(new URL("http://localhost:8080/download"), dataFile);
-			IHDF5SimpleReader reader = HDF5Factory.openForReading(dataFile);
+			IHDF5SimpleReader reader;
 			
+			if (LEARN) {
+				File dataFile = this.getDataFile("network.h5");
+				FileUtils.copyURLToFile(new URL("http://localhost:8080/download"), dataFile);
+				reader = HDF5Factory.openForReading(dataFile);
+			} else {
+				reader = HDF5Factory.openForReading(this.getDataFile("saved_network.h5"));
+			}
+			
+			this.epsilon = reader.readDouble("/epsilon");
+			System.out.println(this.epsilon);
 			double[] weights = reader.readDoubleArray("/network");
-			NeuralNetwork net = new MultiLayerPerceptron(5, 10, 3, 3, 1, 1);
-
-			System.out.println(weights.length);
-			
+			MultiLayerPerceptron net = new MultiLayerPerceptron(5, 256, 256, 256, 1, 1);			
 			int idx = 0;
 			
 			ReLUTransferFunction transferFunction = new ReLUTransferFunction();

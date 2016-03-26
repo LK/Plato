@@ -9,20 +9,22 @@ cmd:option('-snapshot', '')
 params = cmd:parse(arg)
 
 local net = nil
+local steps = 0
 
 -- Set up the network
 if params.snapshot ~= '' then
-  net = torch.load(params.snapshot)
+  net = torch.load('snapshots/' .. params.snapshot)
+  steps = params.snapshot
   print('Loaded network from snapshot')
 else
   net = nn.Sequential()
-  net:add(nn.Linear(5, 10))
+  net:add(nn.Linear(5, 256))
   net:add(nn.ReLU())
-  net:add(nn.Linear(10, 3))
+  net:add(nn.Linear(256, 256))
   net:add(nn.ReLU())
-  net:add(nn.Linear(3, 3))
+  net:add(nn.Linear(256, 256))
   net:add(nn.ReLU())
-  net:add(nn.Linear(3, 1))
+  net:add(nn.Linear(256, 1))
 end
 
 local crit = nn.MSECriterion()
@@ -36,6 +38,15 @@ local database = client:getDatabase('plato')
 local collection = database:getCollection('games')
 
 local steps = 0
+
+local function dump(steps)
+  local file = hdf5.open('snapshots/' .. steps .. '.h5', 'w')
+  file:write('/network', weights)
+  file:write('/epsilon', torch.Tensor({math.min(1/((steps+1) * 1e-4), 1.0)}))
+  file:close()
+
+  torch.save('snapshots/' .. steps, net)
+end
 
 -- Take a state (from Mongo) and return an array
 local function state_to_array(state)
@@ -59,15 +70,15 @@ local function f(w)
     -- Sample a random state from each game
     local state_idx = math.random(#game.history)
     local state = game.history[state_idx] -- sample random state
-    mb_x[idx] = state_to_array(state)
+    mb_x[idx] = torch.Tensor(state_to_array(state))
 
     -- Calculate Q-target
     if state_idx == #game.history then -- is this a terminal state?
       -- If it's a terminal state, Q-target is just the reward
       if state.res == 'W' then
-        mb_y[idx] = {1}
+        mb_y[idx] = torch.Tensor({1})
       else
-        mb_y[idx] = {0}
+        mb_y[idx] = torch.Tensor({0})
       end
     else
       -- Otherwise, use Bellman optimality equation
@@ -75,11 +86,11 @@ local function f(w)
       local arr = state_to_array(game.history[state_idx+1])
 
       -- Find maximum action for following state
-      for a = 1,5 do
+      for a = 0,5 do
         arr[5] = a
-        max = math.max(max, delayed_net:forward(torch.Tensor(arr)))
+        max = math.max(max, delayed_net:forward(torch.Tensor(arr))[1])
       end
-      mb_y[idx] = {max} -- gamma = 1, r = 0
+      mb_y[idx] = torch.Tensor({max}) -- gamma = 1, r = 0
     end
 
     idx = idx + 1
@@ -100,28 +111,29 @@ local function f(w)
 
 end
 
-local steps = 0
+if steps == 0 then dump(0) end
 
 while true do
-  if steps % 10000 == 0 then
-    print('Step ' .. steps)
+  if collection:count() < 64 then
+    local time = os.clock()
+    while os.clock() - time < 5 do end
+  else
+    if steps % 100 == 0 then
+      print('Step ' .. steps)
 
-    -- Update our "delayed" network to our current weights
-    delayed_net = net:clone()
+      -- Update our "delayed" network to our current weights
+      delayed_net = net:clone()
 
-    local weights_, _ = net:parameters()
-    for key, value in pairs(weights_) do print(key, value) end
+      -- local weights_, _ = net:parameters()
+      -- for key, value in pairs(weights_) do print(key, value) end
 
-    -- Dump a snapshot
-    local file = hdf5.open('snapshots/' .. steps .. '.h5', 'w')
-    file:write('/network', weights)
-    file:close()
+      -- Dump a snapshot
+      dump(steps)
+    end
 
-    torch.save('snapshots/' .. steps, net)
+    local state = {learningRate=1e-3}
+    optim.adam(f, weights, state)
+
+    steps = steps + 1
   end
-
-  local state = {learningRate=1e-3}
-  optim.adam(f, weights, state)
-
-  steps = steps + 1
 end

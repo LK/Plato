@@ -3,6 +3,7 @@
 import argparse
 import time
 import os
+import glob
 import requests
 
 def main():
@@ -16,9 +17,18 @@ def main():
     while True:
         print('Looking for new matches to upload...', end='')
         files = []
+        newest = None
+        newest_time = 0
         for f in os.listdir(args.dir):
             if os.path.isfile(os.path.join(args.dir, f)) and os.path.splitext(f)[1] == '.txt':
+                if newest_time < os.path.getmtime(os.path.join(args.dir, f)):
+                    newest_time = os.path.getmtime(os.path.join(args.dir, f))
+                    newest = f
                 files.append(f)
+
+        # Ignore the newest file in case its still being written
+        # NOTE: This won't scale to multiple simultaneous battle runners
+        files.remove(newest)
 
         if len(files) > 0:
             print('will upload %d files' % len(files))

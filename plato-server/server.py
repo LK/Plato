@@ -17,7 +17,7 @@ class Application(tornado.web.Application):
 class DownloadHandler(tornado.web.RequestHandler):
     def get(self):
         # http://stackoverflow.com/questions/18279063/python-find-newest-file-with-mp3-extension-in-directory
-        newest = max(glob.iglob('snapshots/*.h5'), key=os.path.getctime)
+        newest = max(glob.iglob('snapshots/*.h5'), key=os.path.getmtime)
         f = open(newest, 'rb')
         self.write(f.read())
 
@@ -60,7 +60,7 @@ class UploadHandler(tornado.web.RequestHandler):
 
                 history.append({'heading': float(nums[0]), 'energy': float(nums[1]), 'oppBearing': float(nums[2]), 'oppEnergy': float(nums[3]), 'action': int(nums[4])})
 
-            doc = {'name': os.path.splitext(filename)[0], 'history': history, 'res': lines[-1]}
+            doc = {'name': os.path.splitext(filename)[0], 'history': history, 'res': result}
 
             games.insert_one(doc)
             games_history.insert_one(doc)
