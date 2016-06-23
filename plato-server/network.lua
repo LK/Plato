@@ -1,3 +1,7 @@
+-- ~8500 in oldsnapshots
+-- ~8500 in snapshotsenergyreward
+
+-- try: change win/loss reward, only look at last ~100 games (or not!), look at non-max q vals (is there a gap?), proper delayed q-targets, noq with energy rewards, reward = change in my energy - change in opp energy, 8500 with oldsnapshot, change state representation, gpu training
 require 'torch'
 require 'nn'
 require 'optim'
@@ -35,14 +39,12 @@ local weights, grad_weights = net:getParameters()
 -- Connect to database
 local client = MongoClient.new('mongodb://localhost:27017/')
 local database = client:getDatabase('plato')
-local collection = database:getCollection('games')
-
-local steps = 0
+local collection = database:getCollection('games_history')
 
 local function dump(steps)
   local file = hdf5.open('snapshots/' .. steps .. '.h5', 'w')
   file:write('/network', weights)
-  file:write('/epsilon', torch.Tensor({math.min(1/((steps+1) * 1e-4), 1.0)}))
+  file:write('/epsilon', torch.Tensor({math.max(steps * (-1.0/50000.0) + 1.0, 0.0)}))
   file:close()
 
   torch.save('snapshots/' .. steps, net)
@@ -76,9 +78,9 @@ local function f(w)
     if state_idx == #game.history then -- is this a terminal state?
       -- If it's a terminal state, Q-target is just the reward
       if state.res == 'W' then
-        mb_y[idx] = torch.Tensor({1})
+        mb_y[idx] = torch.Tensor({1000})
       else
-        mb_y[idx] = torch.Tensor({0})
+        mb_y[idx] = torch.Tensor({-1000})
       end
     else
       -- Otherwise, use Bellman optimality equation
@@ -90,7 +92,9 @@ local function f(w)
         arr[5] = a
         max = math.max(max, delayed_net:forward(torch.Tensor(arr))[1])
       end
-      mb_y[idx] = torch.Tensor({max}) -- gamma = 1, r = 0
+
+      local r = -(game.history[state_idx+1].oppEnergy - state.oppEnergy) + (game.history[state_idx+1].energy - state.energy)
+      mb_y[idx] = torch.Tensor({r + 0.99 * max}) -- gamma = 0.99, r = negative change in opponent energy
     end
 
     idx = idx + 1
@@ -118,7 +122,7 @@ while true do
     local time = os.clock()
     while os.clock() - time < 5 do end
   else
-    if steps % 100 == 0 then
+    if steps % 500 == 0 then
       print('Step ' .. steps)
 
       -- Update our "delayed" network to our current weights

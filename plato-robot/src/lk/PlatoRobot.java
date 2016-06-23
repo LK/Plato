@@ -66,7 +66,7 @@ public class PlatoRobot extends AdvancedRobot {
 		Action a;
 		Random rand = new Random();
 		double r = rand.nextDouble();
-		if (r < this.epsilon) {
+		if (r < this.epsilon || this.network == null) {
 			r = rand.nextDouble();
 			if (r < 1.0/6.0) {
 				a = Action.FORWARD;
@@ -82,7 +82,7 @@ public class PlatoRobot extends AdvancedRobot {
 				a = Action.NOTHING;
 			}
 		} else {
-			double maxQ = 0.0;
+			double maxQ = -Double.MAX_VALUE;
 			Action maxA = Action.NOTHING;
 			for (Action A : Action.values()) {
 				this.network.setInput(this.getHeading(), this.getEnergy(), event.getBearing(), event.getEnergy(), A.ordinal());
@@ -93,6 +93,7 @@ public class PlatoRobot extends AdvancedRobot {
 					maxA = A;
 				}
 			}
+			System.out.println("Max Q: " + maxQ);
 			a = maxA;
 		}
 		

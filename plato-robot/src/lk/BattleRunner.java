@@ -12,7 +12,7 @@ public class BattleRunner extends BattleAdaptor {
 
 	public static void main(String[] args) {
 		BattleRunner runner = new BattleRunner();
-		runner.run(1000);
+		runner.run(100000);
 		
 	}
 	
