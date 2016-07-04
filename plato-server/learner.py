@@ -1,39 +1,38 @@
-import socket
+import logging
+from multiprocessing import Pipe
 import struct
+import sys
 import tensorflow as tf
 
 '''
 Packet format:
- - Action [unsigned char]:     the action that was selected after the state in
-                               this packet.
- - Reward [float16]:           the reward received after the above action.
- - Agent heading [float16]:    the heading of the agent before the action.
- - Agent energy [float16]:     the energy of the agent before the action.
- - Opponent bearing [float16]: the opponent's bearing before the action.
- - Opponent energy [float16]:  the opponent's energy before the action.
+ - Action [unsigned char]:			the action that was selected after the state in
+																this packet.
+ - Reward [float16]:						the reward received after the above action.
+ - Agent heading [float16]:			the heading of the agent before the action.
+ - Agent energy [float16]:			the energy of the agent before the action.
+ - Opponent bearing [float16]:	the opponent's bearing before the action.
+ - Opponent energy [float16]:		the opponent's energy before the action.
 '''
+
 PACKET_FMT = '<ffffBf'
-SERVER_IP = '127.0.0.1'
-SERVER_PORT = 8000
 
-def main():
-    # Start the UDP server
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind((SERVER_IP, SERVER_PORT))
+def start_learner(pipe):
+	if pipe == None:
+		logging.error('Attempted to start learner without server pipe - exiting')
+		sys.exit(1)
 
-    # Train loop
-    while True:
-        data = sock.recvfrom(struct.calcsize(PACKET_FMT))
+	# Train loop
+	while True:
+		data = pipe.recv()
+		logging.debug('Received packet')
 
-        try:
-            packet = struct.unpack(PACKET_FMT, data)
-        except struct.error as err:
-            print '[!] Received bad packet, skipping: ' + str(err)
-            continue
+		try:
+			packet = struct.unpack(PACKET_FMT, data)
+		except struct.error as err:
+			logging.error('Bad packet, skipping: %s', str(err))
+			continue
 
-        action = packet[0]
-        reward = packet[1]
-        state  = packet[2:]
-
-def __name__ == '__main__':
-    main()
+		action = packet[0]
+		reward = packet[1]
+		state  = packet[2:]
