@@ -15,7 +15,7 @@ Packet format:
  - Opponent energy [float16]:		the opponent's energy before the action.
 '''
 
-PACKET_FMT = '<ffffBf'
+PACKET_FMT = '<Bfffff'
 
 def start_learner(pipe):
 	if pipe == None:
