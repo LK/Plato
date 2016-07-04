@@ -61,7 +61,7 @@ def main():
 		buf = sock.recv(65535)
 		logging.debug('Received client packet')
 
-		# Extract and strip the client ID and exit flag from the received packet
+		# Extract and strip the client ID from the received packet
 		client_id = struct.unpack('<i', buf)
 		buf = buf[4:]
 
