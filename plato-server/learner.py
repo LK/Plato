@@ -3,17 +3,6 @@ import struct
 import sys
 import tensorflow as tf
 
-'''
-Packet format:
- - Action [unsigned char]:			the action that was selected after the state in
-																this packet.
- - Reward [float16]:						the reward received after the above action.
- - Agent heading [float16]:			the heading of the agent before the action.
- - Agent energy [float16]:			the energy of the agent before the action.
- - Opponent bearing [float16]:	the opponent's bearing before the action.
- - Opponent energy [float16]:		the opponent's energy before the action.
-'''
-
 PACKET_FMT = '<Bfffff'
 
 def start_learner(pipe):
@@ -24,7 +13,13 @@ def start_learner(pipe):
 	# Train loop
 	while True:
 		data = pipe.recv()
+
 		logging.debug('Received packet')
+
+		if data == 'STOP':
+			logging.info('Received STOP packet, will terminate after last update')
+
+			return
 
 		try:
 			packet = struct.unpack(PACKET_FMT, data)
