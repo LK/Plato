@@ -1,5 +1,4 @@
 import logging
-from multiprocessing import Pipe
 import struct
 import sys
 import tensorflow as tf

@@ -5,20 +5,20 @@ from multiprocessing import Process, Pipe
 import socket
 
 def main():
-	logging.basicConfig(format='%(asctime)s [%(levelname)s] - %(message)s',
-											datefmt='%m/%d/%Y %I:%M:%S %p')
+	logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
+											datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.DEBUG)
 
 	parser = argparse.ArgumentParser(
 			description='Start the learning server for Plato.')
 
 	parser.add_argument(
-			'learners', type=int, default=1,
+			'--learners', type=int, default=1,
 			help='The number of learner processes to start')
 	parser.add_argument(
-			'ip', type=string, default='127.0.0.1',
+			'--ip', default='127.0.0.1',
 			help='The IP address to listen to connections on.')
 	parser.add_argument(
-			'port', type=int, default='8080',
+			'--port', type=int, default='8000',
 			help='The port to listen to connections on.')
 
 	args = parser.parse_args()
@@ -39,7 +39,7 @@ def main():
 	sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 	sock.bind((args.ip, args.port))
 
-	logging.info('Listening for client packets on %s:%d'. args.ip, args.port)
+	logging.info('Listening for client packets on %s:%d', args.ip, args.port)
 
 	pool_index = 0
 
@@ -70,11 +70,11 @@ def main():
 def create_learner_process():
 	logging.debug('Creating learner process')
 
-		parent_conn, child_conn = Pipe()
+	parent_conn, child_conn = Pipe()
 
-		# TODO: Don't assume learner initialization succeeded
-		p = Process(target=learner.start_learner, args=(child_conn,))
-		return (p, parent_conn)
+	# TODO: Don't assume learner initialization succeeded
+	p = Process(target=learner.start_learner, args=(child_conn,))
+	return (p, parent_conn)
 
-def __name__ == '__main__':
+if __name__ == '__main__':
 	main()
