@@ -20,23 +20,24 @@ class ValueNetwork(nn.Module):
   def __init__(self, base):
     super(ValueNetwork, self).__init__()
     self.base = base
-    self.fc1 = nn.Linear(128, 1)
+    self.value = nn.Linear(128, 1)
 
   def forward(self, x):
     x = self.base(x)
-    x = F.relu(self.fc1(x))
+    x = self.value(x)
     return x
 
 class PolicyNetwork(nn.Module):
   def __init__(self, base, actions=4, hidden_size=128):
     super(PolicyNetwork, self).__init__()
     self.base = base
-    self.fc1 = nn.Linear(hidden_size, actions)
+    self.policy = nn.Linear(hidden_size, actions)
 
   def forward(self, x):
     x = self.base(x)
-    x = F.relu(self.fc1(x))
-    return F.softmax(x)
+    x = self.policy(x)
+    #return F.softmax(x)
+    return x
 
 class JointNetwork(nn.Module):
   def __init__(self, value, policy):
@@ -47,4 +48,4 @@ class JointNetwork(nn.Module):
   def forward(self, x):
     value = self.value(x)
     policy = self.policy(x)
-    return torch.cat(policy, value)
+    return torch.cat((policy, value), 1)

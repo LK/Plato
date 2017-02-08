@@ -1,10 +1,13 @@
-import argparse
+import h5py
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import learner
 import logging
 from network import *
 import socket
 import struct
+import threading
 import time
+import torch
 import torch.multiprocessing as mp
 import torch.optim as optim
 
@@ -29,124 +32,202 @@ Packet format:
  - Opponent energy [float32]:   the opponent's energy before the action.
 '''
 
-def main():
-  logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
-                      datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.DEBUG)
+class LearningServer(object):
+  def __init__(self, state_dims, ip, port, filename):
+    self.state_dims = state_dims
+    self.ip = ip
+    self.port = port
 
-  parser = argparse.ArgumentParser(
-      description='Start the learning server for Plato.')
+    # Build networks
+    self.base_network = BaseNetwork(state_dims)
+    self.value_network = ValueNetwork(self.base_network)
+    self.policy_network = PolicyNetwork(self.base_network)
+    self.joint_network = JointNetwork(self.value_network, self.policy_network)
+    self.joint_network.share_memory()
 
-  parser.add_argument(
-      '--ip', default='127.0.0.1',
-      help='The IP address to listen to connections on.')
-  parser.add_argument(
-      '--port', type=int, default=8000,
-      help='The port to listen to connections on.')
-  parser.add_argument(
-      '--state-dims', type=int, default=4, dest='state_dims',
-      help='The number of dimensions in the state space.')
-  parser.add_argument(
-      '--actions', type=int, default=4,
-      help='The number of possible actions.')
+    # Read or create HDF5 file
+    self.file = h5py.File(filename)
+    if len(self.file.keys()) > 0:
+      logging.info('Restoring weights from %s...', filename)
+      self.base_network.fc1.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['w'][:]))
+      self.base_network.fc1.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['b'][:]))
+      self.base_network.fc2.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['w'][:]))
+      self.base_network.fc2.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['b'][:]))
+      self.value_network.value.weight = torch.nn.Parameter(torch.from_numpy(self.file['v']['w'][:]))
+      self.value_network.value.bias = torch.nn.Parameter(torch.from_numpy(self.file['v']['b'][:]))
+      self.policy_network.policy.weight = torch.nn.Parameter(torch.from_numpy(self.file['p']['w'][:]))
+      self.policy_network.policy.bias = torch.nn.Parameter(torch.from_numpy(self.file['p']['b'][:]))
+    else:
+      logging.debug('Saving initial weights to %s', filename)
+      fc1 = self.file.create_group('fc1')
+      fc2 = self.file.create_group('fc2')
+      v = self.file.create_group('v')
+      p = self.file.create_group('p')
 
-  args = parser.parse_args()
+      fc1.create_dataset('w', data=self.base_network.fc1.weight.data.numpy())
+      fc1.create_dataset('b', data=self.base_network.fc1.bias.data.numpy())
+      fc2.create_dataset('w', data=self.base_network.fc2.weight.data.numpy())
+      fc2.create_dataset('b', data=self.base_network.fc2.bias.data.numpy())
+      v.create_dataset('w', data=self.value_network.value.weight.data.numpy())
+      v.create_dataset('b', data=self.value_network.value.bias.data.numpy())
+      p.create_dataset('w', data=self.policy_network.policy.weight.data.numpy())
+      p.create_dataset('b', data=self.policy_network.policy.bias.data.numpy())
+      self.file.flush()
 
-  # Build the networks
-  base   = BaseNetwork(args.state_dims)
-  value  = ValueNetwork(base)
-  policy = PolicyNetwork(base)
-  joint  = JointNetwork(value, policy)
-  joint.share_memory()
+    a = torch.autograd.Variable(torch.Tensor([-1, 1, 2, 3]))
+    b = torch.autograd.Variable(torch.Tensor([24, -123, 31, -31.3]))
+    c = torch.autograd.Variable(torch.Tensor([-22.123, 123.3, 312.3, 3100]))
+    d = torch.autograd.Variable(torch.Tensor([.2233, .141414, -.003, -.223]))
 
-  # Queue of gradients coming in from the workers
-  gradient_queue = mp.Queue()
+    print(self.joint_network(a.view(1, 4)))
+    print(self.joint_network(b.view(1, 4)))
+    print(self.joint_network(c.view(1, 4)))
+    print(self.joint_network(d.view(1, 4)))
 
-  # The format for client packets
-  packet_fmt = '>Bf' + ('f'*args.state_dims)
+  def start(self):
+    """ Start the server asynchronously. """
+    t = threading.Thread(target=self._run)
+    t.daemon = True
+    t.start()
 
-  # Set up a mapping of client ID -> (process, pipe)
-  pool = {}
+  def _run(self):
+    logging.debug('Starting learning server.')
 
-  # Set up a mapping of client ID -> timestamp of last received packet
-  last_received = {}
+    # Client ID -> (learner process, pipe)
+    client_pool = dict()
 
-  # Set up the load balancer to forward requests to individual learner processes
-  sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-  sock.bind((args.ip, args.port))
+    # Client ID -> time of last received packet
+    last_received = dict()
 
-  # Start the gradient applier process
-  optimizer = optim.Adam(joint.parameters())
-  gradient_applier_process = mp.Process(target=gradient_applier, 
-                                        args=(joint, gradient_queue, optimizer))
-  gradient_applier_process.start()
+    # Packet format (omitting the client ID, which is stripped)
+    packet_fmt = '>Bf' + ('f'* self.state_dims)
 
-  logging.info('Listening for client packets on %s:%d', args.ip, args.port)
+    # Start the gradient applier process
+    gradient_queue = mp.Queue()
+    optimizer = optim.Adam(self.joint_network.parameters())
+    gradient_applier_process = mp.Process(target=self.gradient_applier, 
+      args=(self.joint_network, gradient_queue, optimizer))
+    gradient_applier_process.start()
 
-  while True:
-    # Scan for "dead" clients (no packets for >20 seconds)
-    # TODO: Do this sparingly, instead of after every packet
-    for client, timestamp in last_received.items():
-      if time.time() - timestamp > 20:
-        # Remove dead clients from pool
+    # Start listening for packets
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((self.ip, self.port))
 
-        logging.info('Client %s has become inactive, stopping learner (%d ' \
-                     'remaining)', client, len(pool)-1)
+    logging.info('Listening for client packets on %s:%d', self.ip, self.port)
 
-        pool[client][0].terminate()
-        del pool[client]
-        del last_received[client]
+    while True:
+      # Scan for "dead" clients (no packets for >20 seconds)
+      # TODO: Do this sparingly, instead of after every packet
+      for client, timestamp in last_received.items():
+        if time.time() - timestamp > 20:
+          # Remove dead clients from pool
 
-    (buf, addr) = sock.recvfrom(65535)
-    logging.debug('Received client packet')
+          logging.info('Client %s has become inactive, stopping learner (%d ' \
+                       'remaining)', client, len(pool)-1)
+
+          pool[client][0].terminate()
+          del client_pool[client]
+          del last_received[client]
+
+    buf = sock.recv(65535)
 
     # Extract and strip the client ID from the received packet
     client_id = struct.unpack('<i', buf[:4])[0]
     buf = buf[4:]
+
+    logging.debug('Received client packet from %d' % client_id)
 
     last_received[client_id] = time.time()
 
     # If it's a new client, create a client and add to pool
     if client_id not in pool:
       logging.info('Creating process for new client %d (%d total)', client_id,
-                   len(pool))
+                   len(client_pool))
 
-      pool[client_id] = create_learner_process(joint, gradient_queue,
-                                               packet_fmt)
+      client_pool[client_id] = self.create_learner_process(self.joint_network,
+                                                    gradient_queue, packet_fmt)
 
     # Check if the learner process died and recreate
     if not pool[client_id][0].is_alive():
       logging.warning('Learner %d died - recreating', client_id)
 
-      pool[client_id] = create_learner_process(joint, gradient_queue, 
-                                               packet_fmt)
+      client_pool[client_id] = self.create_learner_process(self.joint_network,
+                                                    gradient_queue, packet_fmt)
 
     # Forward the packet to the learner process
     try:
-      pool[client_id][1].send(buf)
+      client_pool[client_id][1].send(buf)
     except:
       logging.error('Failed to send a packet to %d learner', client_id)
 
-def create_learner_process(joint_network, gradient_queue, packet_fmt):
-  logging.debug('Creating learner process')
+  def create_learner_process(joint_network, gradient_queue, packet_fmt):
+    logging.debug('Creating learner process')
 
-  parent_conn, child_conn = mp.Pipe()
+    parent_conn, child_conn = mp.Pipe()
 
-  p = mp.Process(target=learner.start_learner, 
+    p = mp.Process(target=learner.start_learner, 
                  args=(child_conn, joint_network, gradient_queue, packet_fmt))
-  p.start()
-  return (p, parent_conn)
+    p.start()
+    return (p, parent_conn)
 
-def gradient_applier(global_model, gradient_queue, optimizer):
-  logging.debug('Starting gradient applier process')
-  while True:
-    optimizer.zero_grad()
-    local_params = gradient_queue.get()
-    logging.debug('Applying gradients')
-    for (local_param, global_param) in zip(local_params, 
-                                           global_model.parameters()):
-      global_param.grad.data = local_param.grad.data
+  def gradient_applier(self, global_model, gradient_queue, optimizer):
+    logging.debug('Starting gradient applier process')
+    while True:
+      local_params = gradient_queue.get()
 
-    optimizer.step()
+      optimizer.zero_grad()
+      logging.debug('Applying gradients')
+      for (local_param, global_param) in zip(local_params, 
+                                             global_model.parameters()):
+        global_param.grad.data = local_param.grad.data
 
-if __name__ == '__main__':
-  main()
+      optimizer.step()
+      
+      self.file['fc1']['w'] = self.base_network.fc1.weight
+      self.file['fc1']['b'] = self.base_network.fc1.bias
+      self.file['fc2']['w'] = self.base_network.fc2.weight
+      self.file['fc2']['b'] = self.base_network.fc2.bias
+      self.file['v']['w'] = self.value_network.value.weight
+      self.file['v']['b'] = self.value_network.value.bias
+      self.file['p']['w'] = self.policy_network.policy.weight
+      self.file['p']['b'] = self.policy_network.policy.bias
+      self.file.flush()
+
+      logging.debug('Updated saved weights')
+  
+class WeightServer(object):
+  class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+      self.send_response(200)
+      self.send_header('Content-Type', 'binary/octet-stream')
+      self.end_headers()
+      self.send_weights()
+
+    def log_request(self, code='-', size='-'):
+      logging.debug('Weight server sent %s response', code)
+
+  def __init__(self, ip, port, filename):
+    self.ip = ip
+    self.port = port
+    self.filename = filename
+
+  def start(self):
+    """ Start the server asynchronously. """
+    t = threading.Thread(target=self._run)
+    t.daemon = True
+    t.start()
+
+  def _run(self):
+    logging.debug('Starting weight server.')
+
+    def send_weights(handler):
+      f = open(self.filename, 'rb')
+      handler.wfile.write(f.read())
+      f.close()
+
+    self.Handler.send_weights = send_weights
+    httpd = HTTPServer((self.ip, self.port), self.Handler)
+
+    logging.info('Listening for weight requests on %s:%d', self.ip, self.port)
+    
+    httpd.serve_forever()

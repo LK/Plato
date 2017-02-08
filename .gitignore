@@ -50,4 +50,4 @@ local.properties
 .recommenders/
 
 # Network snapshots
-plato-server/snapshots/
+*.hdf5
