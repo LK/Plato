@@ -1,5 +1,6 @@
 package lk;
 
+import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -25,27 +26,34 @@ public class StateReporter {
 		}
 	}
 	
-	public void report(float agentHeading, float agentEnergy, float oppBearing, float oppEnergy, float reward) {
+	public void report(float agentHeading, float agentEnergy, float oppBearing, float oppEnergy, float reward, int action) {
 		try {
-			ByteBuffer buf = ByteBuffer.allocate(25);
-			buf.putInt(this.ID);
-			buf.put((byte)0);
+			ByteBuffer buf = ByteBuffer.allocate(21);
+			buf.put((byte)action);
 			buf.putFloat(reward);
 			buf.putFloat(agentHeading);
 			buf.putFloat(agentEnergy);
 			buf.putFloat(oppBearing);
 			buf.putFloat(oppEnergy);
 			
-			DatagramPacket packet = new DatagramPacket(buf.array(), buf.capacity(), this.host, this.port);
-			this.s.send(packet);
+			this.send(buf.array());
 		} catch (Exception exception) {
 			exception.printStackTrace();
 		}
 	}
 	
+	private void send(byte[] bytes) throws IOException {
+		ByteBuffer buf = ByteBuffer.allocate(bytes.length + 4);
+		buf.putInt(this.ID);
+		buf.put(bytes);
+		DatagramPacket packet = new DatagramPacket(buf.array(), buf.capacity(), this.host, this.port);
+		this.s.send(packet);
+	}
+	
 	public void close() {
 		try {
-			this.s.close();
+//			this.s.close();
+			this.send("STOP".getBytes());
 		} catch (Exception e) {
 			e.printStackTrace();
 		}
