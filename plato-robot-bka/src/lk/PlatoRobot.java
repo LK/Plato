@@ -1,6 +1,5 @@
 package lk;
 
-import java.util.Arrays;
 import java.util.Random;
 
 import robocode.AdvancedRobot;
@@ -48,20 +47,17 @@ public class PlatoRobot extends AdvancedRobot {
 	}
 	
 	public void run() {
+		System.out.println("#####");
+
 		this.surrender = false;
 		this.stateReporter = new StateReporter("localhost", 8000);
 		this.network = new Network();
-		long start = System.currentTimeMillis();
 		this.network.downloadNetwork("http://localhost:8001", this.getDataFile("network.hdf5"));
-		long end = System.currentTimeMillis();
-		
-		System.out.println("Loading network took " + (end - start) + " ms");
-		System.out.println("Time is " + this.getTime());
 		
 		while (true) {
 			this.setTurnRadarRight(360);
 			this.execute();
-
+			
 			if (this.getTime() >= 2000 && !this.surrender) {
 				this.surrender = true;
 				this.stateReporter.report((float)this.getHeading(), (float)this.getEnergy(), (float)lastBearing, (float)lastEnergy, -1.0f, lastAction.ordinal());
@@ -73,6 +69,8 @@ public class PlatoRobot extends AdvancedRobot {
 	public void onScannedRobot(ScannedRobotEvent event) {
 		double[] inputs = {this.getHeading(), this.getEnergy(), event.getBearing(), event.getEnergy()};
 		double[] policy = this.network.policy(inputs);
+		
+		System.out.println(this.getTime());
 		
 		Random rand = new Random();
 		double r = rand.nextDouble();

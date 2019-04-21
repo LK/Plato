@@ -3,6 +3,7 @@ import logging
 import math
 import struct
 import torch
+import torch.optim as optim
 
 GAMMA = 0.99
 
@@ -16,11 +17,7 @@ def start_learner(pipe, joint_network, gradient_queue, writer, packet_fmt='<Bfff
   # the episode.
   history = []
 
-  # Make a local copy of the model
-  joint_network_ = copy.deepcopy(joint_network)
-
-
-  joint_network_.train()
+  optimizer = optim.Adam(joint_network.parameters())
 
   # Train loop
   while True:
@@ -31,11 +28,13 @@ def start_learner(pipe, joint_network, gradient_queue, writer, packet_fmt='<Bfff
       logging.debug(history[-1][2])
       writer.log_episode(len(history), history[-1][2])
 
+      optimizer.zero_grad()
+
       R = 0
       for state, action, reward in reversed(history):
         R = reward + GAMMA*R
         state_var = torch.autograd.Variable(torch.Tensor(state)).view(1, 4)
-        out = joint_network_(state_var)
+        out = joint_network(state_var)
         value_out = out[0][-1]
         policy_out = out[0][action]
 
@@ -43,16 +42,18 @@ def start_learner(pipe, joint_network, gradient_queue, writer, packet_fmt='<Bfff
         policy_loss = torch.log(policy_out) * (R - value_out) + BETA * entropy
         value_loss = (R - value_out) ** 2
         
-        policy_loss.backward(retain_variables=True)
-        value_loss.backward(retain_variables=True)
+        total_loss = policy_loss + value_loss
+        total_loss.backward()
+
+        optimizer.step()
+        
         totalnorm = 0
-        for p in joint_network_.parameters():
+        for p in joint_network.parameters():
           modulenorm = p.grad.data.norm()
           totalnorm += modulenorm ** 2
         totalnorm = math.sqrt(totalnorm)
-        writer.log_update(value_loss.data.numpy()[0], policy_loss.data.numpy()[0], totalnorm, out[0][:-1].data.numpy())
-        # print(out[0][:-1])
-      gradient_queue.put(list(joint_network_.parameters()))
+        writer.log_update(value_loss.data.numpy(), policy_loss.data.numpy(), totalnorm, out[0][:-1].data.numpy())
+        
       return
     try:
       packet = struct.unpack(packet_fmt, data)

@@ -42,6 +42,8 @@ public class Network {
 		policyNetwork.calculate();
 		double[] outputs = policyNetwork.getOutput();
 
+		return base_out;
+		
 		double[] exps = new double[outputs.length];
 		double sum = 0;
 		for (int i = 0; i < outputs.length; i++) {
@@ -69,7 +71,7 @@ public class Network {
 			this.valueNetwork = new MultiLayerPerceptron(128, 1);
 			setupLayer(this.valueNetwork.getLayerAt(1), reader.readFloatMatrix("/v/w"), reader.readFloatArray("/v/b"), new Linear());
 			
-			this.policyNetwork = new MultiLayerPerceptron(128, 6);
+			this.policyNetwork = new MultiLayerPerceptron(128, 4);
 			// this.policyNetwork.getLayerAt(0).removeNeuronAt(128);
 			setupLayer(this.policyNetwork.getLayerAt(1), reader.readFloatMatrix("/p/w"), reader.readFloatArray("/p/b"), new Linear());
 		} catch (Exception e) {

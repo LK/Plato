@@ -7,7 +7,7 @@ import threading
 
 def main():
   logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
-                      datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
+                      datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.DEBUG)
 
   parser = argparse.ArgumentParser(
       description='Start the learning server for Plato.')

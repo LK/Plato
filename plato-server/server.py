@@ -11,6 +11,7 @@ import time
 import torch
 import torch.multiprocessing as mp
 import torch.optim as optim
+import numpy as np
 
 '''
 Packet format:
@@ -52,14 +53,14 @@ class LearningServer(object):
     self.file = h5py.File(filename, driver='sec2')
     if len(self.file.keys()) > 0:
       logging.info('Restoring weights from %s...', filename)
-      self.base_network.fc1.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['w'][:]))
-      self.base_network.fc1.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['b'][:]))
-      self.base_network.fc2.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['w'][:]))
-      self.base_network.fc2.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['b'][:]))
-      self.value_network.value.weight = torch.nn.Parameter(torch.from_numpy(self.file['v']['w'][:]))
-      self.value_network.value.bias = torch.nn.Parameter(torch.from_numpy(self.file['v']['b'][:]))
-      self.policy_network.policy.weight = torch.nn.Parameter(torch.from_numpy(self.file['p']['w'][:]))
-      self.policy_network.policy.bias = torch.nn.Parameter(torch.from_numpy(self.file['p']['b'][:]))
+      self.base_network.fc1.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['w'][:])).type(torch.float)
+      self.base_network.fc1.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['b'][:])).type(torch.float)
+      self.base_network.fc2.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['w'][:])).type(torch.float)
+      self.base_network.fc2.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['b'][:])).type(torch.float)
+      self.value_network.value.weight = torch.nn.Parameter(torch.from_numpy(self.file['v']['w'][:])).type(torch.float)
+      self.value_network.value.bias = torch.nn.Parameter(torch.from_numpy(self.file['v']['b'][:])).type(torch.float)
+      self.policy_network.policy.weight = torch.nn.Parameter(torch.from_numpy(self.file['p']['w'][:])).type(torch.float)
+      self.policy_network.policy.bias = torch.nn.Parameter(torch.from_numpy(self.file['p']['b'][:])).type(torch.float)
       self.joint_network.updates = self.file.attrs['updates']
     else:
       logging.debug('Saving initial weights to %s', filename)
@@ -81,6 +82,8 @@ class LearningServer(object):
 
       self.file.flush()
     self.lock.release()
+
+    self.joint_network.share_memory()
 
   def start(self):
     """ Start the server asynchronously. """
@@ -174,37 +177,41 @@ class LearningServer(object):
     p.start()
     return (p, parent_conn)
 
-  def gradient_applier(self, global_model, gradient_queue, optimizer):
-    logging.debug('Starting gradient applier process')
-    optimizer.zero_grad()
-    while True:
-      logging.info('Waiting for gradient...')
-      local_params = gradient_queue.get()
-      logging.info('Applying gradients')
-      for (local_param, global_param) in zip(local_params, 
-                                             global_model.parameters()):
-        global_param.grad.data = local_param.grad.data.clamp(-100, 100)
+  # def gradient_applier(self, global_model, gradient_queue, optimizer):
+  #   logging.debug('Starting gradient applier process')
+  #   optimizer.zero_grad()
+  #   while True:
+  #     logging.info('Waiting for gradient...')
+  #     local_params = gradient_queue.get()
+  #     print(len(local_params))
+  #     print(len(list(global_model.parameters())))
+  #     logging.info('Applying gradients')
+  #     for (local_param, global_param) in zip(local_params, 
+  #                                            global_model.parameters()):
+  #       print(local_param)
+  #       print(local_param.grad)
+  #       global_param.grad.data = local_param.grad.data.clamp(-100, 100)
 
-      optimizer.step()
-      global_model.updates += 1
+  #     optimizer.step()
+  #     global_model.updates += 1
 
-      self.lock.acquire()
-      self.file['fc1']['w'][...] = self.base_network.fc1.weight.data.numpy()
-      self.file['fc1']['b'][...] = self.base_network.fc1.bias.data.numpy()
-      self.file['fc2']['w'][...] = self.base_network.fc2.weight.data.numpy()
-      self.file['fc2']['b'][...] = self.base_network.fc2.bias.data.numpy()
-      self.file['v']['w'][...] = self.value_network.value.weight.data.numpy()
-      self.file['v']['b'][...] = self.value_network.value.bias.data.numpy()
-      self.file['p']['w'][...] = self.policy_network.policy.weight.data.numpy()
-      self.file['p']['b'][...] = self.policy_network.policy.bias.data.numpy()
-      self.file.attrs['updates'] = global_model.updates
+  #     self.lock.acquire()
+  #     self.file['fc1']['w'][...] = self.base_network.fc1.weight.data.numpy()
+  #     self.file['fc1']['b'][...] = self.base_network.fc1.bias.data.numpy()
+  #     self.file['fc2']['w'][...] = self.base_network.fc2.weight.data.numpy()
+  #     self.file['fc2']['b'][...] = self.base_network.fc2.bias.data.numpy()
+  #     self.file['v']['w'][...] = self.value_network.value.weight.data.numpy()
+  #     self.file['v']['b'][...] = self.value_network.value.bias.data.numpy()
+  #     self.file['p']['w'][...] = self.policy_network.policy.weight.data.numpy()
+  #     self.file['p']['b'][...] = self.policy_network.policy.bias.data.numpy()
+  #     self.file.attrs['updates'] = global_model.updates
 
-      self.file.flush()
-      self.lock.release()
+  #     self.file.flush()
+  #     self.lock.release()
 
-      logging.debug('Updated saved weights')
+  #     logging.debug('Updated saved weights')
 
-      optimizer.zero_grad()
+  #     optimizer.zero_grad()
   
 class WeightServer(object):
   class Handler(BaseHTTPRequestHandler):

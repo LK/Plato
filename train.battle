@@ -5,4 +5,4 @@ robocode.battle.numRounds=1000
 robocode.battle.gunCoolingRate=0.1
 robocode.battle.rules.inactivityTime=3000
 robocode.battle.hideEnemyNames=true
-robocode.battle.selectedRobots=sample.SittingDuck,lk.PlatoRobot
+robocode.battle.selectedRobots=sample.SittingDuck,lk.PlatoRobot*
