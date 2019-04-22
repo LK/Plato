@@ -45,8 +45,7 @@ class LearningServer(object):
     self.base_network = BaseNetwork(state_dims)
     self.value_network = ValueNetwork(self.base_network)
     self.policy_network = PolicyNetwork(self.base_network)
-    self.joint_network = JointNetwork(self.value_network, self.policy_network)
-    self.joint_network.share_memory()
+    self.joint_network = JointNetwork(self.value_network, self.policy_network).share_memory()
 
     # Read or create HDF5 file
     self.lock.acquire()
@@ -62,6 +61,7 @@ class LearningServer(object):
       self.policy_network.policy.weight = torch.nn.Parameter(torch.from_numpy(self.file['p']['w'][:])).type(torch.float)
       self.policy_network.policy.bias = torch.nn.Parameter(torch.from_numpy(self.file['p']['b'][:])).type(torch.float)
       self.joint_network.updates = self.file.attrs['updates']
+      logging.info('Restored network with %d updates', self.joint_network.updates)
     else:
       logging.debug('Saving initial weights to %s', filename)
       fc1 = self.file.create_group('fc1')
@@ -82,8 +82,6 @@ class LearningServer(object):
 
       self.file.flush()
     self.lock.release()
-
-    self.joint_network.share_memory()
 
   def start(self):
     """ Start the server asynchronously. """
@@ -177,24 +175,10 @@ class LearningServer(object):
     p.start()
     return (p, parent_conn)
 
-  # def gradient_applier(self, global_model, gradient_queue, optimizer):
-  #   logging.debug('Starting gradient applier process')
-  #   optimizer.zero_grad()
+  # def weight_serializer(self):
   #   while True:
-  #     logging.info('Waiting for gradient...')
-  #     local_params = gradient_queue.get()
-  #     print(len(local_params))
-  #     print(len(list(global_model.parameters())))
-  #     logging.info('Applying gradients')
-  #     for (local_param, global_param) in zip(local_params, 
-  #                                            global_model.parameters()):
-  #       print(local_param)
-  #       print(local_param.grad)
-  #       global_param.grad.data = local_param.grad.data.clamp(-100, 100)
-
-  #     optimizer.step()
-  #     global_model.updates += 1
-
+  #     time.sleep(30)
+  #     logging.info('Serializing weights...')
   #     self.lock.acquire()
   #     self.file['fc1']['w'][...] = self.base_network.fc1.weight.data.numpy()
   #     self.file['fc1']['b'][...] = self.base_network.fc1.bias.data.numpy()
@@ -204,14 +188,45 @@ class LearningServer(object):
   #     self.file['v']['b'][...] = self.value_network.value.bias.data.numpy()
   #     self.file['p']['w'][...] = self.policy_network.policy.weight.data.numpy()
   #     self.file['p']['b'][...] = self.policy_network.policy.bias.data.numpy()
-  #     self.file.attrs['updates'] = global_model.updates
-
+  #     self.file.attrs['updates'] = self.joint_network.updates
   #     self.file.flush()
   #     self.lock.release()
+  #     logging.info('Saved network with %d updates', self.joint_network.updates)
 
-  #     logging.debug('Updated saved weights')
 
-  #     optimizer.zero_grad()
+  def gradient_applier(self, global_model, gradient_queue, optimizer):
+    logging.debug('Starting gradient applier process')
+    optimizer.zero_grad()
+    while True:
+      logging.info('Waiting for gradient...')
+      local_params = gradient_queue.get()
+      print(len(local_params))
+      print(len(list(global_model.parameters())))
+      logging.info('Applying gradients')
+      for (local_param, global_param) in zip(local_params, 
+                                             global_model.parameters()):
+        global_param.grad.data = local_param.grad.data.clamp(-100, 100)
+
+      optimizer.step()
+      global_model.updates += 1
+
+      self.lock.acquire()
+      self.file['fc1']['w'][...] = self.base_network.fc1.weight.data.numpy()
+      self.file['fc1']['b'][...] = self.base_network.fc1.bias.data.numpy()
+      self.file['fc2']['w'][...] = self.base_network.fc2.weight.data.numpy()
+      self.file['fc2']['b'][...] = self.base_network.fc2.bias.data.numpy()
+      self.file['v']['w'][...] = self.value_network.value.weight.data.numpy()
+      self.file['v']['b'][...] = self.value_network.value.bias.data.numpy()
+      self.file['p']['w'][...] = self.policy_network.policy.weight.data.numpy()
+      self.file['p']['b'][...] = self.policy_network.policy.bias.data.numpy()
+      self.file.attrs['updates'] = global_model.updates
+
+      self.file.flush()
+      self.lock.release()
+
+      logging.debug('Updated saved weights')
+
+      optimizer.zero_grad()
   
 class WeightServer(object):
   class Handler(BaseHTTPRequestHandler):

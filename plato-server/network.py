@@ -43,7 +43,7 @@ class JointNetwork(nn.Module):
     super(JointNetwork, self).__init__()
     self.value = value
     self.policy = policy
-    self.updates = 0
+    self.updates = torch.nn.Parameter(torch.Tensor([0]))
 
   def forward(self, x):
     value = self.value(x)

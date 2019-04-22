@@ -109,6 +109,8 @@ public class PlatoRobot extends AdvancedRobot {
 		this.lastBearing = event.getBearing();
 		this.lastEnergy = event.getEnergy();
 		this.lastAction = action;
+		// TODO: reward = 2 * their energy loss - our energy loss
+		// TODO: report on regular interval
 		if (!this.surrender) this.stateReporter.report((float)this.getHeading(), (float)this.getEnergy(), (float)event.getBearing(), (float)event.getEnergy(), 0.0f, action.ordinal());
 	}
 	

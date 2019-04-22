@@ -3,11 +3,11 @@ import logging
 from server import LearningServer, WeightServer
 import signal
 import sys
-import threading
+from torch.multiprocessing import Lock
 
 def main():
   logging.basicConfig(format='%(asctime)s [%(levelname)s] %(message)s',
-                      datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.DEBUG)
+                      datefmt='%m/%d/%Y %I:%M:%S %p', level=logging.INFO)
 
   parser = argparse.ArgumentParser(
       description='Start the learning server for Plato.')
@@ -30,7 +30,7 @@ def main():
 
   args = parser.parse_args()
 
-  lock = threading.Lock()
+  lock = Lock()
 
   learning_server = LearningServer(args.state_dims, args.ip, args.learn_port, 
     'network.hdf5', lock)

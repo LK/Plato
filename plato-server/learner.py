@@ -17,7 +17,7 @@ def start_learner(pipe, joint_network, gradient_queue, writer, packet_fmt='<Bfff
   # the episode.
   history = []
 
-  optimizer = optim.Adam(joint_network.parameters())
+  #optimizer = optim.Adam(joint_network.parameters())
 
   # Train loop
   while True:
@@ -28,8 +28,6 @@ def start_learner(pipe, joint_network, gradient_queue, writer, packet_fmt='<Bfff
       logging.debug(history[-1][2])
       writer.log_episode(len(history), history[-1][2])
 
-      optimizer.zero_grad()
-
       R = 0
       for state, action, reward in reversed(history):
         R = reward + GAMMA*R
@@ -38,22 +36,22 @@ def start_learner(pipe, joint_network, gradient_queue, writer, packet_fmt='<Bfff
         value_out = out[0][-1]
         policy_out = out[0][action]
 
-        entropy = - torch.sum(out[0][:-1] * torch.log(out[0][:-1]))
-        policy_loss = torch.log(policy_out) * (R - value_out) + BETA * entropy
+        entropy = - torch.sum(out[0][:-1] * torch.log(out[0][:-1] + 1e-10))
+        policy_loss = torch.log(policy_out + 1e-10) * (R - value_out) + BETA * entropy
         value_loss = (R - value_out) ** 2
         
         total_loss = policy_loss + value_loss
         total_loss.backward()
-
-        optimizer.step()
         
         totalnorm = 0
         for p in joint_network.parameters():
           modulenorm = p.grad.data.norm()
           totalnorm += modulenorm ** 2
         totalnorm = math.sqrt(totalnorm)
+
         writer.log_update(value_loss.data.numpy(), policy_loss.data.numpy(), totalnorm, out[0][:-1].data.numpy())
-        
+      joint_network.updates += 1
+      logging.info("joint_network.updates: %d", joint_network.updates)
       return
     try:
       packet = struct.unpack(packet_fmt, data)
