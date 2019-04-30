@@ -8,7 +8,7 @@ ROBOCODE=$2
 
 start_bg () {
   cd /Users/Lenny/robocode/
-  java -Xmx512M -Dsun.io.useCanonCaches=false -Ddebug=true -DNOSECURITY=true -DROBOTPATH=$ROBOCODE/robots -Dfile.encoding=UTF-8 -classpath "/Users/lenny/code/Plato/plato-robot/bin/lk/*:$ROBOCODE/libs/*:/Users/lenny/code/Plato/plato-robot/libs/*" robocode.Robocode -battle /Users/lenny/code/Plato/train.battle -tps 100 &
+  java -Xmx512M -Dsun.io.useCanonCaches=false -Ddebug=true -DNOSECURITY=true -DROBOTPATH=$ROBOCODE/robots -Dfile.encoding=UTF-8 -classpath "/Users/lenny/code/Plato/plato-robot/bin/lk/*:$ROBOCODE/libs/*:/Users/lenny/code/Plato/plato-robot/libs/*" robocode.Robocode -battle /Users/lenny/code/Plato/train.battle -tps 150 &
   sleep 1
   cd /Users/lenny/code/Plato/
 }

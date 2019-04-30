@@ -131,7 +131,7 @@ class EnvironmentServer(object):
       buf = buf[4:]
 
       if client_id not in self.episodes:
-        self.episodes[client_id] = { 'reward': 0, 'length': 0 }
+        self.episodes[client_id] = { 'reward': 0, 'length': 0, 'q_forward': [], 'q_backward': [], 'q_left': [], 'q_right': [], 'q_fire': [], 'q_nothing': [] }
 
       logging.debug('Received client packet from %d' % client_id)
 
@@ -140,11 +140,28 @@ class EnvironmentServer(object):
       transition = torch.Tensor([packet])
       self.memory.record_transition(transition)
 
+      est_q = self.network(transition[0, self.state_dims + 2:self.state_dims + 2 + self.state_dims].squeeze()).detach()
+
       self.episodes[client_id]['reward'] += transition[0, self.state_dims + 1]
       self.episodes[client_id]['length'] += 10
+      self.episodes[client_id]['q_forward'].append(est_q[0])
+      self.episodes[client_id]['q_backward'].append(est_q[1])
+      self.episodes[client_id]['q_left'].append(est_q[2])
+      self.episodes[client_id]['q_right'].append(est_q[3])
+      self.episodes[client_id]['q_fire'].append(est_q[4])
+      self.episodes[client_id]['q_nothing'].append(est_q[5])
 
       if transition[0, -1] == 1:
-        self.writer.log_episode(self.episodes[client_id]['length'], self.episodes[client_id]['reward'])
+        self.writer.log_episode(
+          self.episodes[client_id]['length'],
+          self.episodes[client_id]['reward'],
+          self.episodes[client_id]['q_forward'],
+          self.episodes[client_id]['q_backward'],
+          self.episodes[client_id]['q_left'],
+          self.episodes[client_id]['q_right'],
+          self.episodes[client_id]['q_fire'],
+          self.episodes[client_id]['q_nothing']
+        )
         del self.episodes[client_id]
 
       if len(self.memory) >= 32:
@@ -157,6 +174,8 @@ class EnvironmentServer(object):
     sample_reward = sample[:, self.state_dims + 1].squeeze()
     sample_end_state = sample[:, self.state_dims + 2:self.state_dims + 2 + self.state_dims]
     sample_terminal = sample[:, -1].squeeze()
+
+    assert(self.state_dims + 2 + self.state_dims == sample.shape[1] - 1)
 
     y = torch.zeros((sample.shape[0],))
     for i in range(sample.shape[0]):
@@ -194,7 +213,7 @@ class EnvironmentServer(object):
 
     self.writer.log_update(loss.item(), totalnorm, np.average(self.network(sample_start_state).detach().numpy(), axis=0))
 
-    print("wrote network with", self.network.updates, "updates", "avg reward:", np.average(sample_reward), "avg terminal:", np.average(sample_terminal))
+    # print("wrote network with", self.network.updates, "updates", "avg reward:", np.average(sample_reward), "avg terminal:", np.average(sample_terminal))
     
 
   # def weight_serializer(self):

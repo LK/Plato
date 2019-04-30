@@ -90,12 +90,14 @@ public class PlatoRobot extends AdvancedRobot {
 			return;
 		}
 
+		System.out.println(this.lastState);
+
 		double[] inputs = { this.lastState.agentHeading, this.lastState.agentEnergy, this.lastState.agentGunHeat,
 				this.lastState.agentX, this.lastState.agentY, this.lastState.opponentBearing,
 				this.lastState.opponentEnergy, this.lastState.distance };
 		double[] policy = this.network.evaluate(inputs);
 
-		double eps = -0.9 / 250000 * this.network.updates + 1;
+		double eps = -0.9 / 150000 * this.network.updates + 1;
 		eps = Math.max(eps, 0.1);
 
 		if (this.getTime() <= 10) {
@@ -128,10 +130,10 @@ public class PlatoRobot extends AdvancedRobot {
 			this.setBack(10);
 			break;
 		case LEFT:
-			this.setTurnLeft(10);
+			this.setTurnLeft(5);
 			break;
 		case RIGHT:
-			this.setTurnRight(10);
+			this.setTurnRight(5);
 			break;
 		case FIRE:
 			this.setFire(1);
@@ -149,10 +151,10 @@ public class PlatoRobot extends AdvancedRobot {
 
 	public void onScannedRobot(ScannedRobotEvent event) {
 		lastReward = this.lastState != null
-				? 2 * (this.lastState.opponentEnergy - event.getEnergy()) + this.getEnergy()
-						- this.lastState.agentEnergy
+				? 1 * (this.lastState.opponentEnergy * 10.0f - event.getEnergy()) + this.getEnergy()
+						- this.lastState.agentEnergy * 10.0f
 				: 0.0f;
-		System.out.println("Reward: " + lastReward);
+		// System.out.println("Reward: " + lastReward);
 		lastState = new State((float) this.getHeading(), (float) this.getEnergy(), (float) this.getGunHeat(),
 				(float) this.getX(), (float) this.getY(), (float) event.getBearing(), (float) event.getEnergy(),
 				(float) event.getDistance());
