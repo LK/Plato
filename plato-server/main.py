@@ -1,6 +1,6 @@
 import argparse
 import logging
-from server import LearningServer, WeightServer
+from server import EnvironmentServer, WeightServer
 import signal
 import sys
 from torch.multiprocessing import Lock
@@ -22,7 +22,7 @@ def main():
       '--weight-port', type=int, default=8001, dest='weight_port',
       help='The port to start the weight server on.')
   parser.add_argument(
-      '--state-dims', type=int, default=4, dest='state_dims',
+      '--state-dims', type=int, default=8, dest='state_dims',
       help='The number of dimensions in the state space.')
   parser.add_argument(
       '--actions', type=int, default=6,
@@ -32,12 +32,12 @@ def main():
 
   lock = Lock()
 
-  learning_server = LearningServer(args.state_dims, args.ip, args.learn_port, 
-    'network.hdf5', lock)
-  learning_server.start()
-
   weight_server = WeightServer(args.ip, args.weight_port, 'network.hdf5', lock)
   weight_server.start()
+
+  learning_server = EnvironmentServer(args.state_dims, args.actions, args.ip, args.learn_port, 
+    'network.hdf5', lock)
+  learning_server.start()
 
   def signal_handler(signal, frame):
     logging.info('Stopping...')

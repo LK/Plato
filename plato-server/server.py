@@ -12,14 +12,26 @@ import torch
 import torch.multiprocessing as mp
 import torch.optim as optim
 import numpy as np
+from experience_memory import ExperienceMemory
+import math
 
 '''
+The EnvironmentServer is responsible for fielding connections from agents in the
+environment, spinning up a process for each and recording transitions they send
+to the ExperienceMemory.
+
 Packet format:
  - Client ID [int32]:           a random unique identifier to identify an
                                 individual client.
+ - Start State [below]:         a description of the start state for this 
+                                transition.
  - Action [byte]:               the action that was selected after the state in
                                 this packet.
  - Reward [float32]:            the reward received after the above action.
+ - End State [below]:           a description of the end state for this
+                                transition.
+ - Terminal [byte]:             1 if this transition ends the episode, 0
+                                otherwise.
 
  ------------------------------------------------------------------------------
   Below is the default configuration of state variables. It is possible to use
@@ -30,53 +42,58 @@ Packet format:
 
  - Agent heading [float32]:     the heading of the agent before the action.
  - Agent energy [float32]:      the energy of the agent before the action.
+ - Agent gun heat [float32]:    the agent's gun heat
+ - Agent X position [float32]:  the agent's X position
+ - Agent Y position [float32]:  the agent's Y position
  - Opponent bearing [float32]:  the opponent's bearing before the action.
  - Opponent energy [float32]:   the opponent's energy before the action.
+ - Distance [float32]:          the distance to the other robot.
 '''
 
-class LearningServer(object):
-  def __init__(self, state_dims, ip, port, filename, lock):
+GAMMA = 0.99
+
+class EnvironmentServer(object):
+  def __init__(self, state_dims, action_dims, ip, port, filename, lock):
     self.state_dims = state_dims
     self.ip = ip
     self.port = port
     self.lock = lock
 
-    # Build networks
-    self.base_network = BaseNetwork(state_dims)
-    self.value_network = ValueNetwork(self.base_network)
-    self.policy_network = PolicyNetwork(self.base_network)
-    self.joint_network = JointNetwork(self.value_network, self.policy_network).share_memory()
+    self.episodes = dict()
+    self.writer = None
+
+    # Build network
+    self.network = QNetwork(state_dims, action_dims)
+    self.optimizer = torch.optim.Adam(self.network.parameters())
+
+    # Create experience replay
+    self.memory = ExperienceMemory()
 
     # Read or create HDF5 file
     self.lock.acquire()
     self.file = h5py.File(filename, driver='sec2')
     if len(self.file.keys()) > 0:
       logging.info('Restoring weights from %s...', filename)
-      self.base_network.fc1.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['w'][:])).type(torch.float)
-      self.base_network.fc1.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['b'][:])).type(torch.float)
-      self.base_network.fc2.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['w'][:])).type(torch.float)
-      self.base_network.fc2.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['b'][:])).type(torch.float)
-      self.value_network.value.weight = torch.nn.Parameter(torch.from_numpy(self.file['v']['w'][:])).type(torch.float)
-      self.value_network.value.bias = torch.nn.Parameter(torch.from_numpy(self.file['v']['b'][:])).type(torch.float)
-      self.policy_network.policy.weight = torch.nn.Parameter(torch.from_numpy(self.file['p']['w'][:])).type(torch.float)
-      self.policy_network.policy.bias = torch.nn.Parameter(torch.from_numpy(self.file['p']['b'][:])).type(torch.float)
-      self.joint_network.updates = self.file.attrs['updates']
-      logging.info('Restored network with %d updates', self.joint_network.updates)
+      self.network.fc1.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['w'][:])).type(torch.float)
+      self.network.fc1.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc1']['b'][:])).type(torch.float)
+      self.network.fc2.weight = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['w'][:])).type(torch.float)
+      self.network.fc2.bias = torch.nn.Parameter(torch.from_numpy(self.file['fc2']['b'][:])).type(torch.float)
+      self.network.out.weight = torch.nn.Parameter(torch.from_numpy(self.file['out']['w'][:])).type(torch.float)
+      self.network.out.bias = torch.nn.Parameter(torch.from_numpy(self.file['out']['b'][:])).type(torch.float)
+      self.network.updates = self.file.attrs['updates']
+      logging.info('Restored network with %d updates', self.network.updates)
     else:
       logging.debug('Saving initial weights to %s', filename)
       fc1 = self.file.create_group('fc1')
       fc2 = self.file.create_group('fc2')
-      v = self.file.create_group('v')
-      p = self.file.create_group('p')
+      out = self.file.create_group('out')
 
-      fc1.create_dataset('w', data=self.base_network.fc1.weight.data.numpy())
-      fc1.create_dataset('b', data=self.base_network.fc1.bias.data.numpy())
-      fc2.create_dataset('w', data=self.base_network.fc2.weight.data.numpy())
-      fc2.create_dataset('b', data=self.base_network.fc2.bias.data.numpy())
-      v.create_dataset('w', data=self.value_network.value.weight.data.numpy())
-      v.create_dataset('b', data=self.value_network.value.bias.data.numpy())
-      p.create_dataset('w', data=self.policy_network.policy.weight.data.numpy())
-      p.create_dataset('b', data=self.policy_network.policy.bias.data.numpy())
+      fc1.create_dataset('w', data=self.network.fc1.weight.data.numpy())
+      fc1.create_dataset('b', data=self.network.fc1.bias.data.numpy())
+      fc2.create_dataset('w', data=self.network.fc2.weight.data.numpy())
+      fc2.create_dataset('b', data=self.network.fc2.bias.data.numpy())
+      out.create_dataset('w', data=self.network.out.weight.data.numpy())
+      out.create_dataset('b', data=self.network.out.bias.data.numpy())
       
       self.file.attrs['updates'] = 0
 
@@ -85,31 +102,20 @@ class LearningServer(object):
 
   def start(self):
     """ Start the server asynchronously. """
-    t = threading.Thread(target=self._run)
-    t.daemon = True
-    t.start()
+    # t = threading.Thread(target=self._run)
+    # t.daemon = True
+    # t.start()
+    self._run()
 
   def _run(self):
     logging.debug('Starting learning server.')
 
-    writer = MetricsWriter('/tmp/plato')
-    writer.start_listening()
-
-    # Client ID -> (learner process, pipe)
-    client_pool = dict()
-
-    # Client ID -> time of last received packet
-    last_received = dict()
+    self.writer = MetricsWriter('/tmp/plato')
+    self.writer.start_listening()
 
     # Packet format (omitting the client ID, which is stripped)
-    packet_fmt = '>Bf' + ('f'* self.state_dims)
-
-    # Start the gradient applier process
-    gradient_queue = mp.SimpleQueue()
-    optimizer = optim.Adam(self.joint_network.parameters())
-    gradient_applier_process = mp.Process(target=self.gradient_applier, 
-      args=(self.joint_network, gradient_queue, optimizer))
-    gradient_applier_process.start()
+    state_struct = ('f' * self.state_dims) 
+    packet_fmt = '>' + state_struct + 'Bf' + state_struct + '?'
 
     # Start listening for packets
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -118,62 +124,78 @@ class LearningServer(object):
     logging.info('Listening for client packets on %s:%d', self.ip, self.port)
 
     while True:
-      # Scan for "dead" clients (no packets for >20 seconds)
-      # TODO: Do this sparingly, instead of after every packet
-      removed_clients = []
-      for client, timestamp in last_received.items():
-        if time.time() - timestamp > 20:
-          # Remove dead clients from pool
-
-          logging.info('Client %s has become inactive, stopping learner (%d ' \
-                       'remaining)', client, len(client_pool)-1)
-
-          client_pool[client][1].send(b'STOP')
-          removed_clients.append(client)
-      for client in removed_clients:
-        del client_pool[client]
-        del last_received[client]
-
       buf = sock.recv(65535)
 
       # Extract and strip the client ID from the received packet
-      client_id = struct.unpack('<i', buf[:4])[0]
+      client_id = struct.unpack('>i', buf[:4])[0]
       buf = buf[4:]
+
+      if client_id not in self.episodes:
+        self.episodes[client_id] = { 'reward': 0, 'length': 0 }
 
       logging.debug('Received client packet from %d' % client_id)
 
-      last_received[client_id] = time.time()
+      # Add experience to memory
+      packet = struct.unpack(packet_fmt, buf)
+      transition = torch.Tensor([packet])
+      self.memory.record_transition(transition)
 
-      # If it's a new client, create a client and add to pool
-      if client_id not in client_pool:
-        logging.info('Creating process for new client %d (%d total)', client_id,
-                     len(client_pool)+1)
+      self.episodes[client_id]['reward'] += transition[0, self.state_dims + 1]
+      self.episodes[client_id]['length'] += 10
 
-        client_pool[client_id] = self.create_learner_process(self.joint_network,
-                                                    gradient_queue, packet_fmt, writer)
+      if transition[0, -1] == 1:
+        self.writer.log_episode(self.episodes[client_id]['length'], self.episodes[client_id]['reward'])
+        del self.episodes[client_id]
 
-      # Check if the learner process died and recreate
-      if not client_pool[client_id][0].is_alive():
-        logging.warning('Learner %d died - recreating', client_id)
+      if len(self.memory) >= 32:
+        self.perform_update()
+      
+  def perform_update(self):
+    sample = self.memory.get_batch()
+    sample_start_state = sample[:, :self.state_dims]
+    sample_action = sample[:, self.state_dims].squeeze()
+    sample_reward = sample[:, self.state_dims + 1].squeeze()
+    sample_end_state = sample[:, self.state_dims + 2:self.state_dims + 2 + self.state_dims]
+    sample_terminal = sample[:, -1].squeeze()
 
-        client_pool[client_id] = self.create_learner_process(self.joint_network,
-                                                    gradient_queue, packet_fmt, writer)
+    y = torch.zeros((sample.shape[0],))
+    for i in range(sample.shape[0]):
+      if sample_terminal[i] == 1:
+        y[i] = sample_reward[i]
+      else:
+        m = torch.max(self.network(sample_end_state[i]))
+        y[i] = sample_reward[i] + GAMMA * m
 
-      # Forward the packet to the learner process
-      try:
-        client_pool[client_id][1].send(buf)
-      except:
-        logging.error('Failed to send a packet to %d learner', client_id)
+    est = self.network(sample_start_state).gather(1, sample_action.type(torch.LongTensor).unsqueeze(1)).squeeze()
+    loss = torch.sum((y - est)**2).squeeze()
 
-  def create_learner_process(self, joint_network, gradient_queue, packet_fmt, writer):
-    logging.debug('Creating learner process')
+    self.optimizer.zero_grad()
+    loss.backward()
+    self.optimizer.step()
 
-    parent_conn, child_conn = mp.Pipe()
+    self.network.updates += 1
 
-    p = mp.Process(target=learner.start_learner, 
-                 args=(child_conn, joint_network, gradient_queue, writer, packet_fmt))
-    p.start()
-    return (p, parent_conn)
+    self.lock.acquire()
+    self.file['fc1']['w'][...] = self.network.fc1.weight.data.numpy()
+    self.file['fc1']['b'][...] = self.network.fc1.bias.data.numpy()
+    self.file['fc2']['w'][...] = self.network.fc2.weight.data.numpy()
+    self.file['fc2']['b'][...] = self.network.fc2.bias.data.numpy()
+    self.file['out']['w'][...] = self.network.out.weight.data.numpy()
+    self.file['out']['b'][...] = self.network.out.bias.data.numpy()
+    self.file.attrs['updates'] = self.network.updates
+    self.file.flush()
+    self.lock.release()
+
+    totalnorm = 0
+    for p in self.network.parameters():
+      modulenorm = p.grad.data.norm()
+      totalnorm += modulenorm ** 2
+    totalnorm = math.sqrt(totalnorm)
+
+    self.writer.log_update(loss.item(), totalnorm, np.average(self.network(sample_start_state).detach().numpy(), axis=0))
+
+    print("wrote network with", self.network.updates, "updates", "avg reward:", np.average(sample_reward), "avg terminal:", np.average(sample_terminal))
+    
 
   # def weight_serializer(self):
   #   while True:
@@ -194,39 +216,39 @@ class LearningServer(object):
   #     logging.info('Saved network with %d updates', self.joint_network.updates)
 
 
-  def gradient_applier(self, global_model, gradient_queue, optimizer):
-    logging.debug('Starting gradient applier process')
-    optimizer.zero_grad()
-    while True:
-      logging.info('Waiting for gradient...')
-      local_params = gradient_queue.get()
-      print(len(local_params))
-      print(len(list(global_model.parameters())))
-      logging.info('Applying gradients')
-      for (local_param, global_param) in zip(local_params, 
-                                             global_model.parameters()):
-        global_param.grad.data = local_param.grad.data.clamp(-100, 100)
+  # def gradient_applier(self, global_model, gradient_queue, optimizer):
+  #   logging.debug('Starting gradient applier process')
+  #   optimizer.zero_grad()
+  #   while True:
+  #     logging.info('Waiting for gradient...')
+  #     local_params = gradient_queue.get()
+  #     print(len(local_params))
+  #     print(len(list(global_model.parameters())))
+  #     logging.info('Applying gradients')
+  #     for (local_param, global_param) in zip(local_params, 
+  #                                            global_model.parameters()):
+  #       global_param.grad.data = local_param.grad.data.clamp(-100, 100)
 
-      optimizer.step()
-      global_model.updates += 1
+  #     optimizer.step()
+  #     global_model.updates += 1
 
-      self.lock.acquire()
-      self.file['fc1']['w'][...] = self.base_network.fc1.weight.data.numpy()
-      self.file['fc1']['b'][...] = self.base_network.fc1.bias.data.numpy()
-      self.file['fc2']['w'][...] = self.base_network.fc2.weight.data.numpy()
-      self.file['fc2']['b'][...] = self.base_network.fc2.bias.data.numpy()
-      self.file['v']['w'][...] = self.value_network.value.weight.data.numpy()
-      self.file['v']['b'][...] = self.value_network.value.bias.data.numpy()
-      self.file['p']['w'][...] = self.policy_network.policy.weight.data.numpy()
-      self.file['p']['b'][...] = self.policy_network.policy.bias.data.numpy()
-      self.file.attrs['updates'] = global_model.updates
+  #     self.lock.acquire()
+  #     self.file['fc1']['w'][...] = self.base_network.fc1.weight.data.numpy()
+  #     self.file['fc1']['b'][...] = self.base_network.fc1.bias.data.numpy()
+  #     self.file['fc2']['w'][...] = self.base_network.fc2.weight.data.numpy()
+  #     self.file['fc2']['b'][...] = self.base_network.fc2.bias.data.numpy()
+  #     self.file['v']['w'][...] = self.value_network.value.weight.data.numpy()
+  #     self.file['v']['b'][...] = self.value_network.value.bias.data.numpy()
+  #     self.file['p']['w'][...] = self.policy_network.policy.weight.data.numpy()
+  #     self.file['p']['b'][...] = self.policy_network.policy.bias.data.numpy()
+  #     self.file.attrs['updates'] = global_model.updates
 
-      self.file.flush()
-      self.lock.release()
+  #     self.file.flush()
+  #     self.lock.release()
 
-      logging.debug('Updated saved weights')
+  #     logging.debug('Updated saved weights')
 
-      optimizer.zero_grad()
+  #     optimizer.zero_grad()
   
 class WeightServer(object):
   class Handler(BaseHTTPRequestHandler):
