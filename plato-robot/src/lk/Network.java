@@ -37,7 +37,7 @@ public class Network {
 
 			System.out.format("Loaded network %s %d\n", dataFile.getName(), this.updates);
 
-			this.qNetwork = new MultiLayerPerceptron(8, 128, 128, 6);
+			this.qNetwork = new MultiLayerPerceptron(8, 32, 32, 6);
 			setupLayer(this.qNetwork.getLayerAt(1), reader.readFloatMatrix("/fc1/w"), reader.readFloatArray("/fc1/b"),
 					new RectifiedLinear());
 			setupLayer(this.qNetwork.getLayerAt(2), reader.readFloatMatrix("/fc2/w"), reader.readFloatArray("/fc2/b"),

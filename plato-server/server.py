@@ -63,7 +63,7 @@ class EnvironmentServer(object):
     self.writer = None
 
     # Build network
-    self.network = QNetwork(state_dims, action_dims)
+    self.network = QNetwork(state_dims, action_dims, 32)
     self.optimizer = torch.optim.Adam(self.network.parameters())
 
     # Create experience replay
@@ -177,6 +177,12 @@ class EnvironmentServer(object):
 
     assert(self.state_dims + 2 + self.state_dims == sample.shape[1] - 1)
 
+    # print("sample_start_state", sample_start_state)
+    # print("sample_action", sample_action)
+    # print("sample_reward", sample_reward)
+    # print("sample_end_state", sample_end_state)
+    # print("sample_terminal", sample_terminal)
+
     y = torch.zeros((sample.shape[0],))
     for i in range(sample.shape[0]):
       if sample_terminal[i] == 1:
@@ -184,6 +190,11 @@ class EnvironmentServer(object):
       else:
         m = torch.max(self.network(sample_end_state[i]))
         y[i] = sample_reward[i] + GAMMA * m
+
+    # print("y", y)
+
+    # print("self.network(sample_start_state)", self.network(sample_start_state))
+    # print("self.network(sample_start_state).gather(1, sample_action.type(torch.LongTensor).unsqueeze(1)).squeeze()", self.network(sample_start_state).gather(1, sample_action.type(torch.LongTensor).unsqueeze(1)).squeeze())
 
     est = self.network(sample_start_state).gather(1, sample_action.type(torch.LongTensor).unsqueeze(1)).squeeze()
     loss = torch.sum((y - est)**2).squeeze()

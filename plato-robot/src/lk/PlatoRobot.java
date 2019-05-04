@@ -21,7 +21,7 @@ public class PlatoRobot extends AdvancedRobot {
 	State lastState;
 	double lastBearing;
 	double lastEnergy;
-	Action lastAction;
+	Action lastAction = Action.NOTHING;
 	double lastReward;
 
 	private enum Action {
@@ -73,6 +73,7 @@ public class PlatoRobot extends AdvancedRobot {
 			// this.stateReporter.close();
 			// } else if (!this.surrender && this.getTime() % 10 == 0) {
 			if (this.getTime() % 10 == 0 && this.getEnergy() > 0) {
+				System.out.println("Performing action at " + this.getTime());
 				this.performAction();
 			}
 
@@ -87,17 +88,22 @@ public class PlatoRobot extends AdvancedRobot {
 
 	public void performAction() {
 		if (this.lastState == null) {
+			System.out.println("No lastState yet; doing nothing");
 			return;
 		}
 
 		System.out.println(this.lastState);
+		System.out.println("Action that got us here: " + this.lastAction);
 
 		double[] inputs = { this.lastState.agentHeading, this.lastState.agentEnergy, this.lastState.agentGunHeat,
 				this.lastState.agentX, this.lastState.agentY, this.lastState.opponentBearing,
 				this.lastState.opponentEnergy, this.lastState.distance };
 		double[] policy = this.network.evaluate(inputs);
 
-		double eps = -0.9 / 150000 * this.network.updates + 1;
+		// double[] testinp = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f };
+		// System.out.println(Arrays.toString(this.network.evaluate(testinp)));
+
+		double eps = -0.9 / 20000 * this.network.updates + 1;
 		eps = Math.max(eps, 0.1);
 
 		if (this.getTime() <= 10) {
@@ -122,6 +128,8 @@ public class PlatoRobot extends AdvancedRobot {
 			}
 		}
 
+		System.out.println("We are doing: " + action);
+
 		switch (action) {
 		case FORWARD:
 			this.setAhead(10);
@@ -142,14 +150,16 @@ public class PlatoRobot extends AdvancedRobot {
 			break;
 		}
 
-		this.lastAction = action;
-
 		if (!this.surrender) {
-			this.stateReporter.recordTransition(action.ordinal(), (float) this.lastReward, this.lastState, false);
+			this.stateReporter.recordTransition(this.lastAction.ordinal(), (float) this.lastReward, this.lastState,
+					false);
 		}
+
+		this.lastAction = action;
 	}
 
 	public void onScannedRobot(ScannedRobotEvent event) {
+		System.out.println("Scanned robot at " + this.getTime());
 		lastReward = this.lastState != null
 				? 1 * (this.lastState.opponentEnergy * 10.0f - event.getEnergy()) + this.getEnergy()
 						- this.lastState.agentEnergy * 10.0f
