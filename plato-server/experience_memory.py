@@ -2,7 +2,7 @@ import random
 import torch
 
 class ExperienceMemory(object):
-  def __init__(self, capacity=20000):
+  def __init__(self, capacity=10000):
     self.capacity = capacity
     self.memory = []
     self.pos = 0
@@ -11,6 +11,9 @@ class ExperienceMemory(object):
     if len(self.memory) < self.capacity:
       self.memory.append(transition.squeeze())
     else:
+      while self.memory[self.pos][9] > 0 and random.random() < 0.9:
+        self.pos = (self.pos + 1) % self.capacity
+
       self.memory[self.pos] = transition.squeeze()
       self.pos = (self.pos + 1) % self.capacity
   

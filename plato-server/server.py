@@ -222,7 +222,7 @@ class EnvironmentServer(object):
       totalnorm += modulenorm ** 2
     totalnorm = math.sqrt(totalnorm)
 
-    self.writer.log_update(loss.item(), totalnorm, np.average(self.network(sample_start_state).detach().numpy(), axis=0))
+    self.writer.log_update(loss.item(), np.average(sample_reward), np.average(self.network(sample_start_state).detach().numpy(), axis=0))
 
     # print("wrote network with", self.network.updates, "updates", "avg reward:", np.average(sample_reward), "avg terminal:", np.average(sample_terminal))
     

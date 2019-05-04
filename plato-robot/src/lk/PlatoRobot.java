@@ -103,7 +103,7 @@ public class PlatoRobot extends AdvancedRobot {
 		// double[] testinp = { 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f };
 		// System.out.println(Arrays.toString(this.network.evaluate(testinp)));
 
-		double eps = -0.9 / 20000 * this.network.updates + 1;
+		double eps = -0.9 / 40000 * this.network.updates + 1;
 		eps = Math.max(eps, 0.1);
 
 		if (this.getTime() <= 10) {
