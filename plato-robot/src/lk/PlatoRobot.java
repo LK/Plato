@@ -192,7 +192,10 @@ public class PlatoRobot extends AdvancedRobot {
 
 	public void onWin(WinEvent event) {
 		if (!this.surrender) {
-			this.stateReporter.recordTransition(this.lastAction.ordinal(), 0.0f, this.lastState, true);
+			this.stateReporter.recordTransition(this.lastAction.ordinal(),
+					(float) (this.lastState.opponentEnergy * 10.0f + this.getEnergy()
+							- this.lastState.agentEnergy * 10.0f),
+					this.lastState, true);
 			this.stateReporter.close();
 		}
 		this.networkFile.delete();
