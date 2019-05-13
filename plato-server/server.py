@@ -183,13 +183,14 @@ class EnvironmentServer(object):
     # print("sample_end_state", sample_end_state)
     # print("sample_terminal", sample_terminal)
 
-    y = torch.zeros((sample.shape[0],))
-    for i in range(sample.shape[0]):
-      if sample_terminal[i] == 1:
-        y[i] = sample_reward[i]
-      else:
-        m = torch.max(self.network(sample_end_state[i]))
-        y[i] = sample_reward[i] + GAMMA * m
+    with torch.no_grad():
+      y = torch.zeros((sample.shape[0],))
+      for i in range(sample.shape[0]):
+        if sample_terminal[i] == 1:
+          y[i] = sample_reward[i]
+        else:
+          m = torch.max(self.network(sample_end_state[i]))
+          y[i] = sample_reward[i] + GAMMA * m
 
     # print("y", y)
 
